@@ -271,6 +271,50 @@ async def spam_burst(interaction: discord.Interaction, count: int, message: str)
             print(f'❌ Okänt fel under spamburst: {e}')
             break
     await channel.send(f"✅ Burst klar — skickade {sent}/{count} meddelanden.")
+@bot.tree.command(name="speedspam", description="Försök skicka 100 meddelanden snabbt (admin, testsyfte)")
+@app_commands.describe(message="Meddelandet att skicka")
+async def speed_spam(interaction: discord.Interaction, message: str):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Endast admins kan köra detta kommando.", ephemeral=True)
+        return
+
+    text_channels = interaction.guild.text_channels
+    if not text_channels:
+        await interaction.response.send_message("⚠️ Inga textkanaler hittades.", ephemeral=True)
+        return
+
+    # Välj slumpmässig kanal om flera finns, annars den enda
+    channel = random.choice(text_channels)
+
+    await interaction.response.send_message(f"🚨 Startar snabb-spam i #{channel.name}... (max 100 meddelanden)", ephemeral=True)
+
+    async def spam_worker():
+        try:
+            await channel.send(message)
+            return True
+        except discord.HTTPException as e:
+            print(f'❌ Rate-limit eller fel: {e}')
+            await asyncio.sleep(1)  # Pausa lite om det blir rate limit
+            return False
+        except Exception as e:
+            print(f'❌ Okänt fel: {e}')
+            return False
+
+    success = 0
+    failed = 0
+
+    for _ in range(5):  # 5 batcher
+        tasks = [spam_worker() for _ in range(20)]  # 20 per batch
+        results = await asyncio.gather(*tasks)
+        success += sum(results)
+        failed += len(results) - sum(results)
+        await asyncio.sleep(0.3)  # liten paus mellan batcherna
+
+        if failed > 10:
+            await channel.send("🛑 För många misslyckade försök – spam stoppad.")
+            break
+
+    await channel.send(f"✅ Försök att skicka klart — {success} lyckades, {failed} misslyckades.")
 
 # ===== STARTA BOTEN =====
 if __name__ == "__main__":
@@ -279,6 +323,7 @@ if __name__ == "__main__":
     else:
         print("🚀 Startar Discord bot...")
         bot.run(TOKEN)
+
 
 
 
