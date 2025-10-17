@@ -28,7 +28,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 AUTO_ROLE_NAME = "Member"
 ANTI_RAID_TIME_WINDOW = 60
 ANTI_RAID_THRESHOLD = 5
-HOURLY_MESSAGE_CHANNEL_NAME = "general"  # <-- UPPDATERAT här
+HOURLY_MESSAGE_CHANNEL_NAME = "general"
 HOURLY_MESSAGE = "SKICKA IN I exposé-📸"
 
 # ===== ANTI-RAID =====
@@ -49,9 +49,7 @@ async def on_ready():
     except Exception as e:
         print(f'❌ Fel vid synkronisering: {e}')
 
-    if not hourly_message.is_running():
-        hourly_message.start()
-        print('✅ Timmeddelanden startade')
+    print('⏸️ Timmeddelanden är avstängda som standard – starta med /start')
 
     if not spammy_message.is_running():
         spammy_message.start()
@@ -113,7 +111,7 @@ async def before_hourly_message():
     print(f"⏳ Väntar {int(wait_seconds)} sekunder tills nästa hel timme ({next_hour.strftime('%H:%M')})...")
     await asyncio.sleep(wait_seconds)
 
-# ===== SEKUND-MEDDELANDEN (AKTIVERADE) =====
+# ===== SEKUND-MEDDELANDEN (TEST) =====
 @tasks.loop(seconds=1)
 async def spammy_message():
     for guild in bot.guilds:
@@ -161,6 +159,31 @@ async def joke(interaction: discord.Interaction):
     ]
     await interaction.response.send_message(f"😄 Skämt:\n{random.choice(jokes)}")
 
+# ===== START / STOPP TIMMEDDELANDEN =====
+@bot.tree.command(name="start", description="Startar timmeddelanden (admin)")
+async def start_hourly(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Du måste vara admin för att använda detta kommando.", ephemeral=True)
+        return
+
+    if hourly_message.is_running():
+        await interaction.response.send_message("🔁 Timmeddelanden körs redan.")
+    else:
+        hourly_message.start()
+        await interaction.response.send_message("✅ Timmeddelanden har startats.")
+
+@bot.tree.command(name="stopp", description="Stoppar timmeddelanden (admin)")
+async def stop_hourly(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Du måste vara admin för att använda detta kommando.", ephemeral=True)
+        return
+
+    if not hourly_message.is_running():
+        await interaction.response.send_message("⏹️ Timmeddelanden är redan stoppade.")
+    else:
+        hourly_message.cancel()
+        await interaction.response.send_message("🛑 Timmeddelanden har stoppats.")
+
 # ===== STARTA BOTEN =====
 if __name__ == "__main__":
     if not TOKEN:
@@ -168,4 +191,5 @@ if __name__ == "__main__":
     else:
         print("🚀 Startar Discord bot...")
         bot.run(TOKEN)
+
 
