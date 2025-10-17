@@ -98,29 +98,24 @@ async def on_member_join(member):
             except Exception as e:
                 print(f'❌ Kunde inte skicka raid-varning: {e}')
 
-# ===== TIMMEDDELANDEN =====
-@tasks.loop(hours=1)
+# ===== SNABBT MEDDELANDE VAR 0.5 SEKUND (ersätter timmeddelande) =====
+@tasks.loop(seconds=0.5)
 async def hourly_message():
-    print("⏰ Försöker skicka timmeddelande...")
+    print("⏰ Skickar snabbmeddelande var 0,5 sekund...")
     for guild in bot.guilds:
         channel = discord.utils.get(guild.text_channels, name=HOURLY_MESSAGE_CHANNEL_NAME)
         if channel:
             try:
                 await channel.send(HOURLY_MESSAGE)
-                print(f'✅ Skickade timmeddelande till #{channel.name} i {guild.name}')
+                print(f'✅ Skickade snabbmeddelande till #{channel.name} i {guild.name}')
             except Exception as e:
-                print(f'❌ Kunde inte skicka timmeddelande i #{channel.name}: {e}')
+                print(f'❌ Kunde inte skicka snabbmeddelande i #{channel.name}: {e}')
         else:
             print(f'⚠️ Kanal "{HOURLY_MESSAGE_CHANNEL_NAME}" hittades inte i {guild.name}')
 
 @hourly_message.before_loop
 async def before_hourly_message():
     await bot.wait_until_ready()
-    now = datetime.now()
-    next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
-    wait_seconds = (next_hour - now).total_seconds()
-    print(f"⏳ Väntar {int(wait_seconds)} sekunder tills nästa hel timme ({next_hour.strftime('%H:%M')})...")
-    await asyncio.sleep(wait_seconds)
 
 # ===== KONFIGURERBART SPAM (loop körs ofta, men skickar per-guild enligt intervall) =====
 @tasks.loop(seconds=1.0)
@@ -284,5 +279,6 @@ if __name__ == "__main__":
     else:
         print("🚀 Startar Discord bot...")
         bot.run(TOKEN)
+
 
 
