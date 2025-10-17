@@ -11,6 +11,7 @@ import os
 import random
 from datetime import datetime, timedelta
 from collections import defaultdict
+import asyncio
 
 # ===== Miljövariabler =====
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')  # Ange token som miljövariabel på Render
@@ -27,7 +28,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 AUTO_ROLE_NAME = "Member"
 ANTI_RAID_TIME_WINDOW = 60
 ANTI_RAID_THRESHOLD = 5
-HOURLY_MESSAGE_CHANNEL_NAME = "general-💬"
+HOURLY_MESSAGE_CHANNEL_NAME = "general"  # <-- UPPDATERAT här
 HOURLY_MESSAGE = "SKICKA IN I exposé-📸"
 
 # ===== ANTI-RAID =====
@@ -52,7 +53,6 @@ async def on_ready():
         hourly_message.start()
         print('✅ Timmeddelanden startade')
 
-    # Här är sekundmeddelandena aktiverade:
     if not spammy_message.is_running():
         spammy_message.start()
         print('⚠️ Sekundmeddelanden startade (testläge)')
@@ -92,18 +92,26 @@ async def on_member_join(member):
 # ===== TIMMEDDELANDEN =====
 @tasks.loop(hours=1)
 async def hourly_message():
+    print("⏰ Försöker skicka timmeddelande...")
     for guild in bot.guilds:
         channel = discord.utils.get(guild.text_channels, name=HOURLY_MESSAGE_CHANNEL_NAME)
         if channel:
             try:
                 await channel.send(HOURLY_MESSAGE)
                 print(f'✅ Skickade timmeddelande till #{channel.name} i {guild.name}')
-            except:
-                print(f'❌ Kunde inte skicka timmeddelande i #{channel.name}')
+            except Exception as e:
+                print(f'❌ Kunde inte skicka timmeddelande i #{channel.name}: {e}')
+        else:
+            print(f'⚠️ Kanal "{HOURLY_MESSAGE_CHANNEL_NAME}" hittades inte i {guild.name}')
 
 @hourly_message.before_loop
 async def before_hourly_message():
     await bot.wait_until_ready()
+    now = datetime.now()
+    next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+    wait_seconds = (next_hour - now).total_seconds()
+    print(f"⏳ Väntar {int(wait_seconds)} sekunder tills nästa hel timme ({next_hour.strftime('%H:%M')})...")
+    await asyncio.sleep(wait_seconds)
 
 # ===== SEKUND-MEDDELANDEN (AKTIVERADE) =====
 @tasks.loop(seconds=1)
@@ -160,3 +168,4 @@ if __name__ == "__main__":
     else:
         print("🚀 Startar Discord bot...")
         bot.run(TOKEN)
+
