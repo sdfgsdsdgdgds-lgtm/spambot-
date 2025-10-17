@@ -39,6 +39,17 @@ def check_raid(guild_id):
     join_times[guild_id] = [t for t in join_times[guild_id] if now - t < timedelta(seconds=ANTI_RAID_TIME_WINDOW)]
     return len(join_times[guild_id]) >= ANTI_RAID_THRESHOLD
 
+# ===== SPAM-KONFIG =====
+# per-guild interval (sekunder). Default 1s (kan ändras med /setspam av admin)
+spam_intervals = defaultdict(lambda: 1.0)  # sekunder, minst 1.0
+# per-guild last send time
+spam_last_sent = defaultdict(lambda: datetime.min)
+# om spam är aktiverat per guild (kan också kontrolleras via loop-running)
+spam_enabled = defaultdict(lambda: True)  # default True eftersom tidigare version startade det
+
+MIN_SPAM_INTERVAL = 1.0  # säkerhetsgräns (sekunder)
+MAX_BURST_MESSAGES = 5   # begränsa burst för att undvika rate limits
+
 # ===== EVENTS =====
 @bot.event
 async def on_ready():
@@ -50,10 +61,10 @@ async def on_ready():
         print(f'❌ Fel vid synkronisering: {e}')
 
     print('⏸️ Timmeddelanden är avstängda som standard – starta med /start')
-
+    # Starta spam-loop (den kontrollerar spam_enabled och intervaller per guild)
     if not spammy_message.is_running():
         spammy_message.start()
-        print('⚠️ Sekundmeddelanden startade (testläge)')
+        print('⚠️ Sekundmeddelanden-loopen startad (styr spam med /setspam, /spamstart, /spamstop)')
 
 @bot.event
 async def on_member_join(member):
@@ -65,13 +76,13 @@ async def on_member_join(member):
         try:
             await member.add_roles(role)
             print(f'✅ Gav rollen "{AUTO_ROLE_NAME}" till {member.name}')
-        except:
-            print(f'❌ Kunde inte ge rollen till {member.name}')
+        except Exception as e:
+            print(f'❌ Kunde inte ge rollen till {member.name}: {e}')
 
     # Anti-raid
     join_times[guild.id].append(datetime.now())
     if check_raid(guild.id):
-        alert_channel = discord.utils.get(guild.text_channels, name="admin") or guild.text_channels[0]
+        alert_channel = discord.utils.get(guild.text_channels, name="admin") or (guild.text_channels[0] if guild.text_channels else None)
         if alert_channel:
             embed = discord.Embed(
                 title="🚨 RAID VARNING 🚨",
@@ -84,8 +95,8 @@ async def on_member_join(member):
             try:
                 await alert_channel.send(embed=embed)
                 print(f'⚠️ Raid upptäckt! Varning skickad till #{alert_channel.name}')
-            except:
-                print('❌ Kunde inte skicka raid-varning')
+            except Exception as e:
+                print(f'❌ Kunde inte skicka raid-varning: {e}')
 
 # ===== TIMMEDDELANDEN =====
 @tasks.loop(hours=1)
@@ -111,17 +122,40 @@ async def before_hourly_message():
     print(f"⏳ Väntar {int(wait_seconds)} sekunder tills nästa hel timme ({next_hour.strftime('%H:%M')})...")
     await asyncio.sleep(wait_seconds)
 
-# ===== SEKUND-MEDDELANDEN (TEST) =====
-@tasks.loop(seconds=1)
+# ===== KONFIGURERBART SPAM (loop körs ofta, men skickar per-guild enligt intervall) =====
+@tasks.loop(seconds=1.0)
 async def spammy_message():
+    """
+    Denna loop körs var 1s och kontrollerar per-guild om det är dags att skicka enligt spam_intervals.
+    Detta gör att vi kan ha olika frekvenser per guild utan att starta flera loops.
+    """
+    now = datetime.now()
     for guild in bot.guilds:
-        channel = discord.utils.get(guild.text_channels, name=HOURLY_MESSAGE_CHANNEL_NAME)
-        if channel:
+        if not spam_enabled[guild.id]:
+            continue
+
+        interval = spam_intervals[guild.id]
+        # säkerhetsgräns
+        if interval < MIN_SPAM_INTERVAL:
+            interval = MIN_SPAM_INTERVAL
+
+        last = spam_last_sent[guild.id]
+        elapsed = (now - last).total_seconds()
+        if elapsed >= interval:
+            channel = discord.utils.get(guild.text_channels, name=HOURLY_MESSAGE_CHANNEL_NAME)
+            if not channel:
+                # kanal finns inte
+                continue
             try:
-                await channel.send("⏱️ Meddelande varje sekund!")  # Testmeddelande
-                print(f'Skickade sekundmeddelande i #{channel.name} ({guild.name})')
+                # Skicka ett meddelande (kan ändras eller varieras)
+                await channel.send("⏱️ Meddelande (spam) — interval: {:.1f}s".format(interval))
+                spam_last_sent[guild.id] = datetime.now()
+                print(f'Skickade spam i #{channel.name} ({guild.name}) — interval {interval}s')
+            except discord.HTTPException as e:
+                # Hantera rate limits / HTTP-fel
+                print(f'❌ HTTPException vid spam i {guild.name}: {e} (väntar nästa gång)')
             except Exception as e:
-                print(f'❌ Fel vid sekundmeddelande: {e}')
+                print(f'❌ Okänt fel vid spam i {guild.name}: {e}')
 
 @spammy_message.before_loop
 async def before_spammy_message():
@@ -183,6 +217,65 @@ async def stop_hourly(interaction: discord.Interaction):
     else:
         hourly_message.cancel()
         await interaction.response.send_message("🛑 Timmeddelanden har stoppats.")
+
+# ===== SPAM-KOMMANDON (ADMIN) =====
+@bot.tree.command(name="spamstart", description="Sätt igång spam-funktionen i den här servern (admin)")
+async def spam_start(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Du måste vara admin för att använda detta kommando.", ephemeral=True)
+        return
+    spam_enabled[interaction.guild_id] = True
+    await interaction.response.send_message("✅ Spam aktiverat i denna server.")
+
+@bot.tree.command(name="spamstop", description="Stoppa spam-funktionen i den här servern (admin)")
+async def spam_stop(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Du måste vara admin för att använda detta kommando.", ephemeral=True)
+        return
+    spam_enabled[interaction.guild_id] = False
+    await interaction.response.send_message("🛑 Spam inaktiverat i denna server.")
+
+@bot.tree.command(name="setspam", description="Ställ in spam-intervallet i sekunder (minst 1s) (admin)")
+@app_commands.describe(seconds="Antal sekunder mellan meddelanden (t.ex. 1.0)")
+async def set_spam(interaction: discord.Interaction, seconds: float):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Du måste vara admin för att använda detta kommando.", ephemeral=True)
+        return
+    if seconds < MIN_SPAM_INTERVAL:
+        await interaction.response.send_message(f"❌ Minsta tillåtna intervall är {MIN_SPAM_INTERVAL} sekunder.", ephemeral=True)
+        return
+    spam_intervals[interaction.guild_id] = float(seconds)
+    await interaction.response.send_message(f"✅ Spam-intervallet är nu satt till {seconds:.1f} sekunder i denna server.")
+
+@bot.tree.command(name="spamburst", description="Skicka flera meddelanden direkt (admin)")
+@app_commands.describe(count="Hur många meddelanden (max 5)", message="Meddelandet att skicka")
+async def spam_burst(interaction: discord.Interaction, count: int, message: str):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Du måste vara admin för att använda detta kommando.", ephemeral=True)
+        return
+    if count < 1 or count > MAX_BURST_MESSAGES:
+        await interaction.response.send_message(f"❌ Antalet måste vara mellan 1 och {MAX_BURST_MESSAGES}.", ephemeral=True)
+        return
+
+    channel = discord.utils.get(interaction.guild.text_channels, name=HOURLY_MESSAGE_CHANNEL_NAME)
+    if not channel:
+        await interaction.response.send_message(f"⚠️ Jag hittade ingen kanal som heter {HOURLY_MESSAGE_CHANNEL_NAME}.", ephemeral=True)
+        return
+
+    await interaction.response.send_message(f"🔃 Skickar {count} meddelanden...", ephemeral=True)
+    sent = 0
+    for i in range(count):
+        try:
+            await channel.send(message)
+            sent += 1
+            await asyncio.sleep(0.5)  # liten paus för att minska risk för rate-limit
+        except discord.HTTPException as e:
+            print(f'❌ HTTPException under spamburst: {e}')
+            break
+        except Exception as e:
+            print(f'❌ Okänt fel under spamburst: {e}')
+            break
+    await channel.send(f"✅ Burst klar — skickade {sent}/{count} meddelanden.")
 
 # ===== STARTA BOTEN =====
 if __name__ == "__main__":
